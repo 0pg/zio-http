@@ -37,6 +37,7 @@ import io.netty.channel._
 import io.netty.handler.codec.http._
 import io.netty.handler.codec.http.websocketx.{WebSocketFrame => JWebSocketFrame, WebSocketServerProtocolHandler}
 import io.netty.handler.timeout.ReadTimeoutException
+import io.netty.util.ReferenceCountUtil
 
 @Sharable
 private[zio] final case class ServerInboundHandler(
@@ -61,13 +62,12 @@ private[zio] final case class ServerInboundHandler(
     this.env = pair._2
   }
 
-  private def ensureHasApp(): Unit = {
-    if (app eq null) {
-      refreshApp()
-    }
-  }
-
   override def channelRead0(ctx: ChannelHandlerContext, msg: HttpObject): Unit = {
+    if (app eq null) {
+      attemptFastWrite(ctx, withDefaultErrorResponse(new IllegalStateException("Server not initialized.")), time)
+      ReferenceCountUtil.release(msg)
+      return
+    }
 
     msg match {
       case jReq: HttpRequest =>
@@ -86,7 +86,6 @@ private[zio] final case class ServerInboundHandler(
           ()
         }
 
-        ensureHasApp()
         val exit =
           if (jReq.decoderResult().isFailure) {
             val throwable = jReq.decoderResult().cause()
